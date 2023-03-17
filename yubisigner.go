@@ -111,17 +111,35 @@ func VerifySignatureWrapper(inputFile, signFile, caFile string, hashAlgo crypto.
 	}
 	log.Debugf("signature file read")
 
-	signatureBlock, rest := pem.Decode(signFileData)
-	if signatureBlock == nil {
-		return false, fmt.Errorf("failed to extract signature from signature file")
+	block1, rest := pem.Decode(signFileData)
+	if block1 == nil {
+		return false, fmt.Errorf("failed to extract first PEM block from signature file")
 	}
-	log.Debugf("signature decoded")
-	signerCertificateBlock, rest := pem.Decode(rest)
-	if signerCertificateBlock == nil {
-		return false, fmt.Errorf("failed to extract signer's certificate from signature file")
+	log.Debugf("got %s block from signature file", block1.Type)
+	block2, rest := pem.Decode(rest)
+	if block2 == nil {
+		return false, fmt.Errorf("failed to extract second PEM block from signature file")
 	}
-	log.Debugf("signer certificate decoded")
-	signerCertificate, err := x509.ParseCertificate(signerCertificateBlock.Bytes)
+	log.Debugf("got %s block from signature file", block2.Type)
+
+	var signBlock []byte
+	var certBlock []byte
+	for _, block := range []*pem.Block{block1, block2} {
+		switch block.Type {
+		case "SIGNATURE":
+			signBlock = append(make([]byte, 0, len(block.Bytes)), block.Bytes...)
+		case "CERTIFICATE":
+			certBlock = append(make([]byte, 0, len(block.Bytes)), block.Bytes...)
+		}
+	}
+	if signBlock == nil {
+		return false, fmt.Errorf("no SIGNATURE block in signature file")
+	}
+	if certBlock == nil {
+		return false, fmt.Errorf("no CERTIFICATE block in signature file")
+	}
+
+	signerCertificate, err := x509.ParseCertificate(certBlock)
 	if err != nil {
 		return false, fmt.Errorf("failed to parse signer certificate: %w", err)
 	}
@@ -144,11 +162,10 @@ func VerifySignatureWrapper(inputFile, signFile, caFile string, hashAlgo crypto.
 	}
 	log.Debugf("CA certificate parsed")
 
-	return VerifySignature(reader, signatureBlock.Bytes, signerCertificate, caCertificate, hashAlgo)
+	return VerifySignature(reader, signBlock, signerCertificate, caCertificate, hashAlgo)
 }
 
 func ListYubiKeys() error {
-
 	log.Debugf("enumerating piv cards")
 	cards, err := piv.Cards()
 	if err != nil {
@@ -276,7 +293,6 @@ func YubiSign(cardIndex int, pinCode string, hashAlgo crypto.Hash, input *bufio.
 }
 
 func SignWrapper(cardIndex int, pinCode string, hashAlgo crypto.Hash, inputFile, outputFile string) error {
-
 	var reader *bufio.Reader
 	if inputFile == "-" {
 		log.Debugf("reading from standard input")
